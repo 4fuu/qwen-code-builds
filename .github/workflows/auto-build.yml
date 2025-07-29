@@ -46,10 +46,10 @@ jobs:
           - os: windows-latest
             target: windows-x64
             ext: '.exe'
-          - os: macos-latest
+          - os: macos-13  # Intel macOS
             target: macos-x64
             ext: ''
-          - os: macos-14 # M1 macOS
+          - os: macos-latest  # Apple Silicon macOS (最新)
             target: macos-arm64
             ext: ''
     
@@ -62,13 +62,6 @@ jobs:
           repository: QwenLM/qwen-code
           ref: main
           
-      - name: 复制许可证文件
-        run: |
-          # 复制原始许可证和版权文件
-          cp LICENSE ../
-          if [ -f "NOTICE" ]; then cp NOTICE ../; fi
-          if [ -f "COPYRIGHT" ]; then cp COPYRIGHT ../; fi
-          
       - name: 安装 Bun
         uses: oven-sh/setup-bun@v1
         with:
@@ -79,20 +72,34 @@ jobs:
         
       - name: 找到入口文件
         id: entry
+        shell: bash
         run: |
           # 查找可能的入口文件
           if [ -f "bundle/gemini.js" ]; then
             echo "entry=bundle/gemini.js" >> $GITHUB_OUTPUT
-          elif [ -f "bin/qwen" ]; then
-            echo "entry=bin/qwen" >> $GITHUB_OUTPUT
-          elif [ -f "dist/index.js" ]; then
-            echo "entry=dist/index.js" >> $GITHUB_OUTPUT
+            echo "找到入口文件: bundle/gemini.js"
           else
-            # 从 package.json 读取
-            MAIN=$(bun run --silent -e "console.log(require('./package.json').main || 'index.js')")
-            echo "entry=$MAIN" >> $GITHUB_OUTPUT
+            # 从 package.json 读取 main 或 bin
+            if [ -f "package.json" ]; then
+              MAIN=$(node -e "
+                const pkg = require('./package.json');
+                if (pkg.bin) {
+                  if (typeof pkg.bin === 'string') {
+                    console.log(pkg.bin);
+                  } else {
+                    console.log(Object.values(pkg.bin)[0]);
+                  }
+                } else {
+                  console.log(pkg.main || 'index.js');
+                }
+              " 2>/dev/null || echo "index.js")
+              echo "entry=$MAIN" >> $GITHUB_OUTPUT
+              echo "从 package.json 读取入口文件: $MAIN"
+            else
+              echo "entry=index.js" >> $GITHUB_OUTPUT
+              echo "使用默认入口文件: index.js"
+            fi
           fi
-        shell: bash
         
       - name: 使用 Bun 编译可执行文件
         run: |
@@ -100,13 +107,34 @@ jobs:
           bun build ${{ steps.entry.outputs.entry }} --compile --outfile qwen-code-${{ matrix.target }}${{ matrix.ext }}
           
       - name: 验证可执行文件
-        run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            ./qwen-code-${{ matrix.target }}.exe --version || echo "版本检查失败，但文件已生成"
-          else
-            ./qwen-code-${{ matrix.target }} --version || echo "版本检查失败，但文件已生成"
-          fi
         shell: bash
+        run: |
+          EXECUTABLE="qwen-code-${{ matrix.target }}${{ matrix.ext }}"
+          echo "验证可执行文件: $EXECUTABLE"
+          
+          # 检查文件是否存在
+          if [ ! -f "$EXECUTABLE" ]; then
+            echo "❌ 可执行文件不存在: $EXECUTABLE"
+            exit 1
+          fi
+          
+          # 检查文件大小
+          FILE_SIZE=$(stat -c%s "$EXECUTABLE" 2>/dev/null || stat -f%z "$EXECUTABLE" 2>/dev/null || wc -c < "$EXECUTABLE")
+          echo "文件大小: $FILE_SIZE bytes"
+          
+          if [ "$FILE_SIZE" -lt 1000000 ]; then
+            echo "⚠️ 警告: 文件大小可能异常小"
+          fi
+          
+          # 尝试运行版本检查（可能失败，但不影响构建）
+          echo "尝试运行版本检查..."
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            ./"$EXECUTABLE" --version 2>/dev/null || ./"$EXECUTABLE" -v 2>/dev/null || echo "版本检查失败，但文件已生成"
+          else
+            ./"$EXECUTABLE" --version 2>/dev/null || ./"$EXECUTABLE" -v 2>/dev/null || echo "版本检查失败，但文件已生成"
+          fi
+          
+          echo "✅ 可执行文件验证完成"
         
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
@@ -121,16 +149,38 @@ jobs:
     if: needs.check-updates.outputs.should-build == 'true'
     
     steps:
+      - name: 获取许可证文件
+        run: |
+          # 从上游仓库获取许可证文件
+          curl -s https://raw.githubusercontent.com/QwenLM/qwen-code/main/LICENSE -o LICENSE
+          curl -s https://raw.githubusercontent.com/QwenLM/qwen-code/main/NOTICE -o NOTICE 2>/dev/null || echo "NOTICE 文件不存在"
+          curl -s https://raw.githubusercontent.com/QwenLM/qwen-code/main/COPYRIGHT -o COPYRIGHT 2>/dev/null || echo "COPYRIGHT 文件不存在"
+          
       - name: 下载所有构建产物
         uses: actions/download-artifact@v4
         
       - name: 创建发布
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           COMMIT_SHA="${{ needs.check-updates.outputs.latest-commit }}"
           RELEASE_TAG="auto-$COMMIT_SHA"
           RELEASE_NAME="自动构建 - $COMMIT_SHA ($(date '+%Y-%m-%d'))"
+          
+          # 准备发布文件列表
+          RELEASE_FILES=""
+          
+          # 添加许可证文件（如果存在）
+          [ -f "LICENSE" ] && RELEASE_FILES="$RELEASE_FILES LICENSE"
+          [ -f "NOTICE" ] && RELEASE_FILES="$RELEASE_FILES NOTICE"
+          [ -f "COPYRIGHT" ] && RELEASE_FILES="$RELEASE_FILES COPYRIGHT"
+          
+          # 添加可执行文件
+          RELEASE_FILES="$RELEASE_FILES qwen-code-linux-x64/qwen-code-linux-x64"
+          RELEASE_FILES="$RELEASE_FILES qwen-code-windows-x64/qwen-code-windows-x64.exe"
+          RELEASE_FILES="$RELEASE_FILES qwen-code-macos-x64/qwen-code-macos-x64"
+          RELEASE_FILES="$RELEASE_FILES qwen-code-macos-arm64/qwen-code-macos-arm64"
           
           # 创建 release
           gh release create "$RELEASE_TAG" \
@@ -140,7 +190,7 @@ jobs:
           📦 **包含平台:**
           - Linux x64
           - Windows x64  
-          - macOS x64
+          - macOS x64 (Intel)
           - macOS ARM64 (Apple Silicon)
           
           🚀 **使用方法:**
@@ -158,12 +208,7 @@ jobs:
           - 如遇问题请优先使用官方版本
           - 使用时请遵守 Apache License 2.0 条款" \
             --repo "${{ github.repository }}" \
-            ../LICENSE \
-            ../NOTICE \
-            qwen-code-linux-x64/qwen-code-linux-x64 \
-            qwen-code-windows-x64/qwen-code-windows-x64.exe \
-            qwen-code-macos-x64/qwen-code-macos-x64 \
-            qwen-code-macos-arm64/qwen-code-macos-arm64
+            $RELEASE_FILES
 
   notify:
     needs: [check-updates, build, release]
