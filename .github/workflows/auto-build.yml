@@ -108,6 +108,17 @@ jobs:
 
       - name: 安装依赖
         run: npm install
+    
+      - name: 获取图标文件
+        run: |
+          # 从你的仓库获取图标文件
+          curl -s https://raw.githubusercontent.com/${{ github.repository }}/main/qwen.ico -o qwen.ico || echo "图标文件不存在，将不使用图标"
+          if [ -f "qwen.ico" ]; then
+            echo "✅ 成功获取图标文件"
+            ls -la qwen.ico
+          else
+            echo "⚠️ 未找到图标文件，Windows 版本将使用默认图标"
+          fi
         
       - name: 找到入口文件
         id: entry
@@ -143,7 +154,13 @@ jobs:
       - name: 编译可执行文件
         run: |
           echo "编译入口文件: ${{ steps.entry.outputs.entry }}"
-          bun build ${{ steps.entry.outputs.entry }} --compile --outfile qwen
+          # 根据平台决定是否使用图标参数
+          if [[ "${{ matrix.os }}" == "windows-latest" ]] && [ -f "qwen.ico" ]; then
+            echo "在 Windows 上使用图标文件"
+            bun build ${{ steps.entry.outputs.entry }} --compile --windows-icon=qwen.ico --outfile ${{ matrix.binary-name }}
+          else
+            bun build ${{ steps.entry.outputs.entry }} --compile --outfile ${{ matrix.binary-name }}
+          fi
           
       - name: 验证可执行文件
         shell: bash
