@@ -110,6 +110,7 @@ jobs:
         run: npm install
     
       - name: 获取图标文件
+        shell: bash
         run: |
           # 从你的仓库获取图标文件
           curl -s https://raw.githubusercontent.com/${{ github.repository }}/main/qwen.ico -o qwen.ico || echo "图标文件不存在，将不使用图标"
