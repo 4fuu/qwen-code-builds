@@ -66,9 +66,15 @@ jobs:
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: latest
-          
+      
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
       - name: 安装依赖
-        run: bun install
+        run: npm install
         
       - name: 找到入口文件
         id: entry
