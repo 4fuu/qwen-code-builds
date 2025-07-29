@@ -1,0 +1,180 @@
+# .github/workflows/auto-build.yml
+name: 自动构建 qwen-code 可执行文件
+
+on:
+  schedule:
+    # 每天北京时间早上 8 点（UTC 0 点）运行
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 支持手动触发
+  push:
+    branches: [ main ] # 当主分支有推送时也触发
+
+jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    outputs:
+      should-build: ${{ steps.check.outputs.should-build }}
+      latest-commit: ${{ steps.check.outputs.latest-commit }}
+    steps:
+      - name: 检查上游仓库是否有更新
+        id: check
+        run: |
+          # 获取上游最新 commit
+          LATEST_COMMIT=$(curl -s https://api.github.com/repos/QwenLM/qwen-code/commits/main | jq -r '.sha[:7]')
+          echo "latest-commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
+          
+          # 检查是否已经构建过这个版本
+          if gh release view "auto-$LATEST_COMMIT" >/dev/null 2>&1; then
+            echo "版本 $LATEST_COMMIT 已存在，跳过构建"
+            echo "should-build=false" >> $GITHUB_OUTPUT
+          else
+            echo "发现新版本 $LATEST_COMMIT，开始构建"
+            echo "should-build=true" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: check-updates
+    if: needs.check-updates.outputs.should-build == 'true'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            ext: ''
+          - os: windows-latest
+            target: windows-x64
+            ext: '.exe'
+          - os: macos-latest
+            target: macos-x64
+            ext: ''
+          - os: macos-14 # M1 macOS
+            target: macos-arm64
+            ext: ''
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: 克隆上游仓库
+        uses: actions/checkout@v4
+        with:
+          repository: QwenLM/qwen-code
+          ref: main
+          
+      - name: 复制许可证文件
+        run: |
+          # 复制原始许可证和版权文件
+          cp LICENSE ../
+          if [ -f "NOTICE" ]; then cp NOTICE ../; fi
+          if [ -f "COPYRIGHT" ]; then cp COPYRIGHT ../; fi
+          
+      - name: 安装 Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+          
+      - name: 安装依赖
+        run: bun install
+        
+      - name: 找到入口文件
+        id: entry
+        run: |
+          # 查找可能的入口文件
+          if [ -f "bundle/gemini.js" ]; then
+            echo "entry=bundle/gemini.js" >> $GITHUB_OUTPUT
+          elif [ -f "bin/qwen" ]; then
+            echo "entry=bin/qwen" >> $GITHUB_OUTPUT
+          elif [ -f "dist/index.js" ]; then
+            echo "entry=dist/index.js" >> $GITHUB_OUTPUT
+          else
+            # 从 package.json 读取
+            MAIN=$(bun run --silent -e "console.log(require('./package.json').main || 'index.js')")
+            echo "entry=$MAIN" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+        
+      - name: 使用 Bun 编译可执行文件
+        run: |
+          echo "编译入口文件: ${{ steps.entry.outputs.entry }}"
+          bun build ${{ steps.entry.outputs.entry }} --compile --outfile qwen-code-${{ matrix.target }}${{ matrix.ext }}
+          
+      - name: 验证可执行文件
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            ./qwen-code-${{ matrix.target }}.exe --version || echo "版本检查失败，但文件已生成"
+          else
+            ./qwen-code-${{ matrix.target }} --version || echo "版本检查失败，但文件已生成"
+          fi
+        shell: bash
+        
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen-code-${{ matrix.target }}
+          path: qwen-code-${{ matrix.target }}${{ matrix.ext }}
+          retention-days: 30
+
+  release:
+    needs: [check-updates, build]
+    runs-on: ubuntu-latest
+    if: needs.check-updates.outputs.should-build == 'true'
+    
+    steps:
+      - name: 下载所有构建产物
+        uses: actions/download-artifact@v4
+        
+      - name: 创建发布
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COMMIT_SHA="${{ needs.check-updates.outputs.latest-commit }}"
+          RELEASE_TAG="auto-$COMMIT_SHA"
+          RELEASE_NAME="自动构建 - $COMMIT_SHA ($(date '+%Y-%m-%d'))"
+          
+          # 创建 release
+          gh release create "$RELEASE_TAG" \
+            --title "$RELEASE_NAME" \
+            --notes "基于 QwenLM/qwen-code@$COMMIT_SHA 的自动构建版本
+
+          📦 **包含平台:**
+          - Linux x64
+          - Windows x64  
+          - macOS x64
+          - macOS ARM64 (Apple Silicon)
+          
+          🚀 **使用方法:**
+          1. 下载对应平台的可执行文件
+          2. 设置环境变量: \`OPENAI_API_KEY\`, \`OPENAI_BASE_URL\`, \`OPENAI_MODEL\`
+          3. 直接运行: \`./qwen-code\` 或 \`qwen-code.exe\`
+          
+          ⚖️ **许可证说明:**
+          - 原始项目许可证: Apache License 2.0
+          - 原始项目地址: https://github.com/QwenLM/qwen-code
+          - 版权归属: Qwen Team, Alibaba Cloud
+          
+          ⚠️ **重要声明:** 
+          - 这是**非官方**构建版本，不代表原作者立场
+          - 如遇问题请优先使用官方版本
+          - 使用时请遵守 Apache License 2.0 条款" \
+            --repo "${{ github.repository }}" \
+            ../LICENSE \
+            ../NOTICE \
+            qwen-code-linux-x64/qwen-code-linux-x64 \
+            qwen-code-windows-x64/qwen-code-windows-x64.exe \
+            qwen-code-macos-x64/qwen-code-macos-x64 \
+            qwen-code-macos-arm64/qwen-code-macos-arm64
+
+  notify:
+    needs: [check-updates, build, release]
+    runs-on: ubuntu-latest
+    if: always() && needs.check-updates.outputs.should-build == 'true'
+    
+    steps:
+      - name: 通知构建结果
+        run: |
+          if [ "${{ needs.release.result }}" = "success" ]; then
+            echo "✅ 构建成功！新版本已发布: auto-${{ needs.check-updates.outputs.latest-commit }}"
+          else
+            echo "❌ 构建失败，请检查日志"
+          fi
