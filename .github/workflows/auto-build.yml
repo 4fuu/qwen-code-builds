@@ -152,6 +152,7 @@ jobs:
           fi
         
       - name: 编译可执行文件
+        shell: bash
         run: |
           echo "编译入口文件: ${{ steps.entry.outputs.entry }}"
           # 根据平台决定是否使用图标参数
