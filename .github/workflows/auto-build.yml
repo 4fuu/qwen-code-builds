@@ -11,8 +11,8 @@ on:
         required: false
         type: boolean
         default: false
-  push:
-    branches: [ main ] # 当主分支有推送时也触发
+#   push:
+#     branches: [ main ] # 当主分支有推送时也触发
 
 # 添加权限设置
 permissions:
@@ -95,10 +95,10 @@ jobs:
           repository: QwenLM/qwen-code
           ref: main
           
-    #   - name: 安装 Bun
-    #     uses: oven-sh/setup-bun@v1
-    #     with:
-    #       bun-version: latest
+      - name: 安装 Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
       
       - name: 设置 Node.js
         uses: actions/setup-node@v4
@@ -107,7 +107,7 @@ jobs:
           cache: 'npm'
 
       - name: 安装依赖
-        run: npm install && npm install -g @appthreat/caxa
+        run: npm install
         
       - name: 找到入口文件
         id: entry
@@ -143,7 +143,7 @@ jobs:
       - name: 编译可执行文件
         run: |
           echo "编译入口文件: ${{ steps.entry.outputs.entry }}"
-          caxa --input . --output ${{ matrix.binary-name }} -- "{{caxa}}/node_modules/.bin/node" "{{caxa}}/${{ steps.entry.outputs.entry }}"
+          bun build ${{ steps.entry.outputs.entry }} --compile --outfile qwen
           
       - name: 验证可执行文件
         shell: bash
