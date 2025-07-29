@@ -5,6 +5,12 @@ on:
     # 每天北京时间早上 8 点（UTC 0 点）运行
     - cron: '0 0 * * *'
   workflow_dispatch: # 支持手动触发
+    inputs:
+      skip-check:
+        description: '跳过版本检查，强制构建'
+        required: false
+        type: boolean
+        default: false
   push:
     branches: [ main ] # 当主分支有推送时也触发
 
@@ -28,6 +34,13 @@ jobs:
           # 获取上游最新 commit
           LATEST_COMMIT=$(curl -s https://api.github.com/repos/QwenLM/qwen-code/commits/main | jq -r '.sha[:7]')
           echo "latest-commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
+          
+          # 如果手动触发且选择跳过检查，直接构建
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.skip-check }}" == "true" ]]; then
+            echo "手动触发且选择跳过检查，强制构建版本 $LATEST_COMMIT"
+            echo "should-build=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
           
           # 获取当前仓库信息
           REPO_OWNER=$(echo $GITHUB_REPOSITORY | cut -d'/' -f1)
@@ -68,7 +81,7 @@ jobs:
             target: macos-x64
             binary-name: qwen
             archive-ext: tar.gz
-          - os: macos-latest  # Apple Silicon macOS (最新)
+          - os: macos-latest  # Apple Silicon macOS
             target: macos-arm64
             binary-name: qwen
             archive-ext: tar.gz
@@ -234,6 +247,15 @@ jobs:
           RELEASE_TAG="auto-$COMMIT_SHA"
           RELEASE_NAME="自动构建 - $COMMIT_SHA ($(date '+%Y-%m-%d'))"
           
+          # 如果是强制构建，先尝试删除已存在的 release
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.skip-check }}" == "true" ]]; then
+            echo "强制构建模式，检查并删除已存在的 release..."
+            if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+              echo "删除已存在的 release: $RELEASE_TAG"
+              gh release delete "$RELEASE_TAG" -y
+            fi
+          fi
+          
           # 准备发布文件列表
           RELEASE_FILES=""
           
@@ -247,6 +269,8 @@ jobs:
           gh release create "$RELEASE_TAG" \
             --title "$RELEASE_NAME" \
             --notes "基于 QwenLM/qwen-code@$COMMIT_SHA 的自动构建版本
+          
+          $([[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.skip-check }}" == "true" ]] && echo "🔄 **强制重新构建**")
 
           📦 **包含平台:**
           - Linux x64: \`qwen-linux-x64.tar.gz\`
