@@ -224,11 +224,6 @@ jobs:
           # 准备发布文件列表
           RELEASE_FILES=""
           
-          # 添加许可证文件（如果存在）
-          [ -f "LICENSE" ] && RELEASE_FILES="$RELEASE_FILES LICENSE"
-          [ -f "NOTICE" ] && RELEASE_FILES="$RELEASE_FILES NOTICE"
-          [ -f "COPYRIGHT" ] && RELEASE_FILES="$RELEASE_FILES COPYRIGHT"
-          
           # 添加压缩包
           [ -f "qwen-linux-x64.tar.gz" ] && RELEASE_FILES="$RELEASE_FILES qwen-linux-x64.tar.gz"
           [ -f "qwen-windows-x64.zip" ] && RELEASE_FILES="$RELEASE_FILES qwen-windows-x64.zip"
