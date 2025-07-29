@@ -1,4 +1,3 @@
-# .github/workflows/auto-build.yml
 name: 自动构建 qwen-code 可执行文件
 
 on:
@@ -8,6 +7,10 @@ on:
   workflow_dispatch: # 支持手动触发
   push:
     branches: [ main ] # 当主分支有推送时也触发
+
+# 添加权限设置
+permissions:
+  contents: write  # 允许创建 release 和写入内容
 
 jobs:
   check-updates:
@@ -42,16 +45,20 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux-x64
-            ext: ''
+            binary-name: qwen
+            archive-ext: tar.gz
           - os: windows-latest
             target: windows-x64
-            ext: '.exe'
+            binary-name: qwen.exe
+            archive-ext: zip
           - os: macos-13  # Intel macOS
             target: macos-x64
-            ext: ''
+            binary-name: qwen
+            archive-ext: tar.gz
           - os: macos-latest  # Apple Silicon macOS (最新)
             target: macos-arm64
-            ext: ''
+            binary-name: qwen
+            archive-ext: tar.gz
     
     runs-on: ${{ matrix.os }}
     
@@ -110,12 +117,12 @@ jobs:
       - name: 使用 Bun 编译可执行文件
         run: |
           echo "编译入口文件: ${{ steps.entry.outputs.entry }}"
-          bun build ${{ steps.entry.outputs.entry }} --compile --outfile qwen-code-${{ matrix.target }}${{ matrix.ext }}
+          bun build ${{ steps.entry.outputs.entry }} --compile --outfile ${{ matrix.binary-name }}
           
       - name: 验证可执行文件
         shell: bash
         run: |
-          EXECUTABLE="qwen-code-${{ matrix.target }}${{ matrix.ext }}"
+          EXECUTABLE="${{ matrix.binary-name }}"
           echo "验证可执行文件: $EXECUTABLE"
           
           # 检查文件是否存在
@@ -141,12 +148,34 @@ jobs:
           fi
           
           echo "✅ 可执行文件验证完成"
+      
+      - name: 创建压缩包
+        shell: bash
+        run: |
+          ARCHIVE_NAME="qwen-${{ matrix.target }}.${{ matrix.archive-ext }}"
+          echo "创建压缩包: $ARCHIVE_NAME"
+          
+          if [[ "${{ matrix.archive-ext }}" == "zip" ]]; then
+            # Windows 使用 zip
+            7z a "$ARCHIVE_NAME" "${{ matrix.binary-name }}"
+          else
+            # Unix 系统使用 tar.gz
+            tar -czf "$ARCHIVE_NAME" "${{ matrix.binary-name }}"
+          fi
+          
+          # 验证压缩包
+          if [ ! -f "$ARCHIVE_NAME" ]; then
+            echo "❌ 压缩包创建失败"
+            exit 1
+          fi
+          
+          echo "✅ 压缩包创建成功"
         
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: qwen-code-${{ matrix.target }}
-          path: qwen-code-${{ matrix.target }}${{ matrix.ext }}
+          name: qwen-${{ matrix.target }}
+          path: qwen-${{ matrix.target }}.${{ matrix.archive-ext }}
           retention-days: 30
 
   release:
@@ -155,6 +184,11 @@ jobs:
     if: needs.check-updates.outputs.should-build == 'true'
     
     steps:
+      - name: 设置仓库
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
       - name: 获取许可证文件
         run: |
           # 从上游仓库获取许可证文件
@@ -165,6 +199,19 @@ jobs:
       - name: 下载所有构建产物
         uses: actions/download-artifact@v4
         
+      - name: 准备发布文件
+        shell: bash
+        run: |
+          # 将所有压缩包移到当前目录
+          mv qwen-linux-x64/qwen-linux-x64.tar.gz . || true
+          mv qwen-windows-x64/qwen-windows-x64.zip . || true
+          mv qwen-macos-x64/qwen-macos-x64.tar.gz . || true
+          mv qwen-macos-arm64/qwen-macos-arm64.tar.gz . || true
+          
+          # 列出所有文件
+          echo "准备发布的文件："
+          ls -la *.tar.gz *.zip LICENSE* NOTICE* COPYRIGHT* 2>/dev/null || true
+          
       - name: 创建发布
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -182,11 +229,11 @@ jobs:
           [ -f "NOTICE" ] && RELEASE_FILES="$RELEASE_FILES NOTICE"
           [ -f "COPYRIGHT" ] && RELEASE_FILES="$RELEASE_FILES COPYRIGHT"
           
-          # 添加可执行文件
-          RELEASE_FILES="$RELEASE_FILES qwen-code-linux-x64/qwen-code-linux-x64"
-          RELEASE_FILES="$RELEASE_FILES qwen-code-windows-x64/qwen-code-windows-x64.exe"
-          RELEASE_FILES="$RELEASE_FILES qwen-code-macos-x64/qwen-code-macos-x64"
-          RELEASE_FILES="$RELEASE_FILES qwen-code-macos-arm64/qwen-code-macos-arm64"
+          # 添加压缩包
+          [ -f "qwen-linux-x64.tar.gz" ] && RELEASE_FILES="$RELEASE_FILES qwen-linux-x64.tar.gz"
+          [ -f "qwen-windows-x64.zip" ] && RELEASE_FILES="$RELEASE_FILES qwen-windows-x64.zip"
+          [ -f "qwen-macos-x64.tar.gz" ] && RELEASE_FILES="$RELEASE_FILES qwen-macos-x64.tar.gz"
+          [ -f "qwen-macos-arm64.tar.gz" ] && RELEASE_FILES="$RELEASE_FILES qwen-macos-arm64.tar.gz"
           
           # 创建 release
           gh release create "$RELEASE_TAG" \
@@ -194,15 +241,16 @@ jobs:
             --notes "基于 QwenLM/qwen-code@$COMMIT_SHA 的自动构建版本
 
           📦 **包含平台:**
-          - Linux x64
-          - Windows x64  
-          - macOS x64 (Intel)
-          - macOS ARM64 (Apple Silicon)
+          - Linux x64: \`qwen-linux-x64.tar.gz\`
+          - Windows x64: \`qwen-windows-x64.zip\`
+          - macOS x64 (Intel): \`qwen-macos-x64.tar.gz\`
+          - macOS ARM64 (Apple Silicon): \`qwen-macos-arm64.tar.gz\`
           
           🚀 **使用方法:**
-          1. 下载对应平台的可执行文件
-          2. 设置环境变量: \`OPENAI_API_KEY\`, \`OPENAI_BASE_URL\`, \`OPENAI_MODEL\`
-          3. 直接运行: \`./qwen-code\` 或 \`qwen-code.exe\`
+          1. 下载对应平台的压缩包
+          2. 解压后得到 \`qwen\` 或 \`qwen.exe\` 可执行文件
+          3. 设置环境变量: \`OPENAI_API_KEY\`, \`OPENAI_BASE_URL\`, \`OPENAI_MODEL\`
+          4. 直接运行: \`./qwen\` (Unix) 或 \`qwen.exe\` (Windows)
           
           ⚖️ **许可证说明:**
           - 原始项目许可证: Apache License 2.0
@@ -213,7 +261,6 @@ jobs:
           - 这是**非官方**构建版本，不代表原作者立场
           - 如遇问题请优先使用官方版本
           - 使用时请遵守 Apache License 2.0 条款" \
-            --repo "${{ github.repository }}" \
             $RELEASE_FILES
 
   notify:
