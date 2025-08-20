@@ -263,7 +263,7 @@ jobs:
         shell: bash
         run: |
           COMMIT_SHA="${{ needs.check-updates.outputs.latest-commit }}"
-          RELEASE_TAG="auto-$COMMIT_SHA"
+          RELEASE_TAG="auto-$(date '+%Y%m%d')-$COMMIT_SHA"
           RELEASE_NAME="自动构建 - $COMMIT_SHA ($(date '+%Y-%m-%d'))"
           
           # 如果是强制构建，先尝试删除已存在的 release
