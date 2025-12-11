@@ -77,11 +77,7 @@ jobs:
             target: windows-x64
             binary-name: qwen.exe
             archive-ext: zip
-          - os: macos-13  # Intel macOS
-            target: macos-x64
-            binary-name: qwen
-            archive-ext: tar.gz
-          - os: macos-latest  # Apple Silicon macOS
+          - os: macos-latest  # macOS (Apple Silicon 优先)
             target: macos-arm64
             binary-name: qwen
             archive-ext: tar.gz
@@ -250,7 +246,6 @@ jobs:
           # 将所有压缩包移到当前目录
           mv qwen-linux-x64/qwen-linux-x64.tar.gz . || true
           mv qwen-windows-x64/qwen-windows-x64.zip . || true
-          mv qwen-macos-x64/qwen-macos-x64.tar.gz . || true
           mv qwen-macos-arm64/qwen-macos-arm64.tar.gz . || true
           
           # 列出所有文件
@@ -281,7 +276,6 @@ jobs:
           # 添加压缩包
           [ -f "qwen-linux-x64.tar.gz" ] && RELEASE_FILES="$RELEASE_FILES qwen-linux-x64.tar.gz"
           [ -f "qwen-windows-x64.zip" ] && RELEASE_FILES="$RELEASE_FILES qwen-windows-x64.zip"
-          [ -f "qwen-macos-x64.tar.gz" ] && RELEASE_FILES="$RELEASE_FILES qwen-macos-x64.tar.gz"
           [ -f "qwen-macos-arm64.tar.gz" ] && RELEASE_FILES="$RELEASE_FILES qwen-macos-arm64.tar.gz"
           
           # 创建 release
@@ -294,7 +288,6 @@ jobs:
           📦 **包含平台:**
           - Linux x64: \`qwen-linux-x64.tar.gz\`
           - Windows x64: \`qwen-windows-x64.zip\`
-          - macOS x64 (Intel): \`qwen-macos-x64.tar.gz\`
           - macOS ARM64 (Apple Silicon): \`qwen-macos-arm64.tar.gz\`
           
           🚀 **使用方法:**
